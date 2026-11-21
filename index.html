@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PHIGHTING! Nameplate Previewer</title>
+  <link rel="icon" type="image/png" href="favicon.png?v=10">
+  <link rel="preload" href="fonts/AlloVariableFriendly.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Montserrat:wght@800;900&display=swap">
+  <link rel="stylesheet" href="style.css?v=10">
+  <script src="data.js?v=10" defer></script>
+  <script src="script.js?v=10" defer></script>
+</head>
+<body>
+<main>
+  <header class="top">
+    <h1>PHIGHTING! nameplate previewer</h1>
+    <img src="logo.webp?v=10" alt="" width="405" height="240">
+  </header>
+
+  <div class="stage">
+    <div class="plate">
+      <canvas id="nameplate" width="1244" height="216" aria-label="Nameplate preview"></canvas>
+    </div>
+    <div class="fields">
+      <p>
+        <label>Player name <input id="player" maxlength="20" value="battbites" autocomplete="off"></label>
+        <label>Title <select id="title"></select></label>
+        <label id="custom-title-label" hidden>Your title <input id="custom-title" maxlength="40" placeholder="Type a title" autocomplete="off"></label>
+      </p>
+      <p id="phestival" hidden>
+        <span id="teams" role="radiogroup" aria-label="Team"></span>
+        <label>Rank <select id="rank"></select></label>
+        <label>Pluses <input id="pluses" type="number" min="0" max="99" value="25"></label>
+      </p>
+    </div>
+    <aside class="requirements" aria-live="polite">
+      <h2>How to unlock</h2>
+      <dl id="requirements"></dl>
+      <button id="download" type="button">Download PNG</button>
+    </aside>
+  </div>
+
+  <p class="same-color"><label><input id="same-color" type="checkbox"> Use the same color for icons and banners</label></p>
+
+  <section class="column" id="icon-column" aria-labelledby="icons-heading">
+    <div class="column-head">
+      <h2 id="icons-heading">Icons <span class="count"></span></h2>
+      <input class="search" type="search" placeholder="Search icons" aria-label="Search icons" autocomplete="off">
+    </div>
+    <div class="hsv"></div>
+    <label class="file">Import your own <input id="icon-upload" type="file" accept="image/*" multiple></label>
+    <div class="picker"></div>
+  </section>
+
+  <section class="column" id="banner-column" aria-labelledby="banners-heading">
+    <div class="column-head">
+      <h2 id="banners-heading">Banners <span class="count"></span></h2>
+      <input class="search" type="search" placeholder="Search banners" aria-label="Search banners" autocomplete="off">
+    </div>
+    <div class="hsv"></div>
+    <label class="file">Import your own <input id="banner-upload" type="file" accept="image/*" multiple></label>
+    <div class="picker"></div>
+  </section>
+
+  <p class="credit">Images and unlock info from the <a href="https://phighting.wiki/Name_cards">PHIGHTING! Wiki</a>. Fan-made, not affiliated with PHIGHTING! Set in <a href="https://allo.joshpuckett.me/">Allo</a>.</p>
+</main>
+</body>
+</html>

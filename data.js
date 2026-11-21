@@ -690,14 +690,14 @@ const NAMEPLATE_DATA = {
   },
   {
    "name": "Aphelion",
-   "image": "assets/banners/aphelion.webp",
+   "image": "assets/banners/aphelion.gif",
    "character": "N/A",
    "requirement": "Possess the Aphelion title.",
    "color": "#0d0d1f"
   },
   {
    "name": "Daybreaker",
-   "image": "assets/banners/daybreaker.webp",
+   "image": "assets/banners/daybreaker.gif",
    "character": "N/A",
    "requirement": "Possess the Daybreaker title.",
    "color": "#d91d14"

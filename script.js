@@ -91,36 +91,99 @@ $('pluses').addEventListener('input', event => {
   render();
 });
 
-const images = new Map();
+const GIFENC = 'https://cdn.jsdelivr.net/npm/gifenc@1.0.3/dist/gifenc.esm.js';
+const media = new Map();
+
 function loadImage(src) {
-  if (!images.has(src)) {
-    images.set(src, new Promise((resolve, reject) => {
-      const img = new Image();
-      img.onload = () => resolve(img);
-      img.onerror = reject;
-      img.src = src;
-    }));
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+    img.src = src;
+  });
+}
+
+async function decodeGif(src) {
+  const decoder = new ImageDecoder({ data: await (await fetch(src)).arrayBuffer(), type: 'image/gif' });
+  await decoder.tracks.ready;
+  await decoder.completed;
+  const frames = [];
+  for (let i = 0; i < decoder.tracks.selectedTrack.frameCount; i++) {
+    const { image } = await decoder.decode({ frameIndex: i });
+    const delay = (image.duration ?? 0) / 1000;
+    frames.push({ image: await createImageBitmap(image), delay: delay >= 20 ? delay : 100 });
+    image.close();
   }
-  return images.get(src);
+  decoder.close();
+  return { frames, duration: frames.length > 1 ? frames.reduce((sum, frame) => sum + frame.delay, 0) : 0 };
 }
 
-function drawCover(img, x, y, w, h) {
-  if (!img.naturalWidth || !img.naturalHeight) return ctx.drawImage(img, x, y, w, h);
-  const scale = Math.max(w / img.naturalWidth, h / img.naturalHeight);
+function loadMedia(item) {
+  if (!media.has(item.image)) {
+    const isGif = item.type ? item.type === 'image/gif' : /\.gif$/i.test(item.image);
+    const still = () => loadImage(item.image).then(image => ({ frames: [{ image, delay: 0 }], duration: 0 }));
+    media.set(item.image, isGif && 'ImageDecoder' in window ? decodeGif(item.image).catch(still) : still());
+  }
+  return media.get(item.image);
+}
+
+function frameAt({ frames, duration }, t) {
+  let time = duration ? t % duration : 0;
+  for (const frame of frames) {
+    if (time < frame.delay) return frame.image;
+    time -= frame.delay;
+  }
+  return frames[0].image;
+}
+
+function drawCover(g, img, x, y, w, h) {
+  const iw = img.naturalWidth || img.width, ih = img.naturalHeight || img.height;
+  if (!iw || !ih) return g.drawImage(img, x, y, w, h);
+  const scale = Math.max(w / iw, h / ih);
   const sw = w / scale, sh = h / scale;
-  ctx.drawImage(img, (img.naturalWidth - sw) / 2, (img.naturalHeight - sh) / 2, sw, sh, x, y, w, h);
+  g.drawImage(img, (iw - sw) / 2, (ih - sh) / 2, sw, sh, x, y, w, h);
 }
 
-function outlinedText(text, x, y, weight, size, maxWidth) {
+function outlinedText(g, text, x, y, weight, size, maxWidth) {
   do {
-    ctx.font = `${weight} ${size}px ${FONT}`;
-  } while (ctx.measureText(text).width > maxWidth && --size > 10);
-  ctx.lineJoin = 'round';
-  ctx.lineWidth = size * 0.13;
-  ctx.strokeStyle = '#000';
-  ctx.strokeText(text, x, y);
-  ctx.fillStyle = '#fff';
-  ctx.fillText(text, x, y);
+    g.font = `${weight} ${size}px ${FONT}`;
+  } while (g.measureText(text).width > maxWidth && --size > 10);
+  g.lineJoin = 'round';
+  g.lineWidth = size * 0.13;
+  g.strokeStyle = '#000';
+  g.strokeText(text, x, y);
+  g.fillStyle = '#fff';
+  g.fillText(text, x, y);
+}
+
+let current = null;
+
+function draw(g, t, { icon, banner } = current) {
+  g.clearRect(0, 0, canvas.width, canvas.height);
+  g.fillStyle = '#000';
+  g.fillRect(0, 0, SIZE + 2 * BORDER, SIZE + 2 * BORDER);
+  g.fillRect(BANNER_X - BORDER, 0, BANNER_W + 2 * BORDER, SIZE + 2 * BORDER);
+  drawCover(g, frameAt(icon, t), BORDER, BORDER, SIZE, SIZE);
+  drawCover(g, frameAt(banner, t), BANNER_X, BORDER, BANNER_W, SIZE);
+
+  const shade = g.createLinearGradient(BANNER_X, BORDER + SIZE, BANNER_X + BANNER_W * 0.5, BORDER);
+  shade.addColorStop(0, 'rgba(0, 0, 0, 0.45)');
+  shade.addColorStop(1, 'rgba(0, 0, 0, 0)');
+  g.fillStyle = shade;
+  g.fillRect(BANNER_X, BORDER, BANNER_W, SIZE);
+
+  const textX = BANNER_X + 36;
+  outlinedText(g, playerInput.value.toUpperCase(), textX, BORDER + 82, 900, 60, BANNER_W * 0.6);
+  outlinedText(g, titleText(), textX + 2, BORDER + 124, 800, 32, BANNER_W * 0.6);
+}
+
+const isAnimated = ({ icon, banner } = current) => icon.duration > 0 || banner.duration > 0;
+const startTime = performance.now();
+let frameRequest = 0;
+
+function animate(now) {
+  draw(ctx, now - startTime);
+  frameRequest = requestAnimationFrame(animate);
 }
 
 let renderId = 0;
@@ -129,7 +192,7 @@ async function render() {
   const iconItem = shown('icon'), bannerItem = shown('banner');
   showRequirements();
   let icon, banner;
-  const load = item => loadImage(item.image).catch(() => { throw item; });
+  const load = item => loadMedia(item).catch(() => { throw item; });
   try {
     [icon, banner] = await Promise.all([
       load(iconItem),
@@ -138,27 +201,16 @@ async function render() {
       document.fonts.load(`800 32px ${FONT}`),
     ]);
   } catch (failed) {
-    if (id === renderId) alert(`Couldn't load "${failed.name}". Try a PNG, JPG or WebP file.`);
+    if (id === renderId) alert(`Couldn't load "${failed.name}". Try a PNG, JPG, WebP or GIF file.`);
     return;
   }
   if (id !== renderId) return;
 
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.fillStyle = '#000';
-  ctx.fillRect(0, 0, SIZE + 2 * BORDER, SIZE + 2 * BORDER);
-  ctx.fillRect(BANNER_X - BORDER, 0, BANNER_W + 2 * BORDER, SIZE + 2 * BORDER);
-  drawCover(icon, BORDER, BORDER, SIZE, SIZE);
-  drawCover(banner, BANNER_X, BORDER, BANNER_W, SIZE);
-
-  const shade = ctx.createLinearGradient(BANNER_X, BORDER + SIZE, BANNER_X + BANNER_W * 0.5, BORDER);
-  shade.addColorStop(0, 'rgba(0, 0, 0, 0.45)');
-  shade.addColorStop(1, 'rgba(0, 0, 0, 0)');
-  ctx.fillStyle = shade;
-  ctx.fillRect(BANNER_X, BORDER, BANNER_W, SIZE);
-
-  const textX = BANNER_X + 36;
-  outlinedText(playerInput.value.toUpperCase(), textX, BORDER + 82, 900, 60, BANNER_W * 0.6);
-  outlinedText(titleText(), textX + 2, BORDER + 124, 800, 32, BANNER_W * 0.6);
+  current = { icon, banner };
+  cancelAnimationFrame(frameRequest);
+  if (!$('download').disabled) $('download').textContent = isAnimated() ? 'Download GIF' : 'Download PNG';
+  if (isAnimated()) frameRequest = requestAnimationFrame(animate);
+  else draw(ctx, 0);
 }
 
 function showRequirements() {
@@ -176,14 +228,62 @@ function showRequirements() {
   }));
 }
 
-$('download').addEventListener('click', () => {
-  canvas.toBlob(blob => {
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(blob);
-    link.download = `nameplate-${playerInput.value || 'player'}.png`;
-    link.click();
-    setTimeout(() => URL.revokeObjectURL(link.href), 1000);
-  });
+function save(blob, extension) {
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = `nameplate-${playerInput.value || 'player'}.${extension}`;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+}
+
+async function makeGif(shot) {
+  const { GIFEncoder, quantize, applyPalette } = await import(GIFENC);
+  const animated = [shot.icon, shot.banner].filter(m => m.duration);
+  const duration = Math.min(Math.max(...animated.map(m => m.duration)), 15000);
+  const step = Math.max(20, Math.min(...animated.flatMap(m => m.frames.map(frame => frame.delay))));
+  const frame = document.createElement('canvas');
+  frame.width = canvas.width;
+  frame.height = canvas.height;
+  const g = frame.getContext('2d', { willReadFrequently: true });
+  const pixels = t => { draw(g, t, shot); return g.getImageData(0, 0, frame.width, frame.height).data; };
+  const times = [];
+  for (let t = 0; t < duration; t += step) times.push(t);
+
+  const samples = Math.min(times.length, 6);
+  const sample = new Uint8ClampedArray(frame.width * frame.height * 4 * samples);
+  for (let s = 0; s < samples; s++) {
+    sample.set(pixels(times[Math.floor(s * times.length / samples)]), s * frame.width * frame.height * 4);
+  }
+  const colors = quantize(sample, 255);
+  const palette = [...colors, [0, 0, 0]];
+  const clear = palette.length - 1;
+
+  const gif = GIFEncoder();
+  for (const [n, t] of times.entries()) {
+    const data = pixels(t);
+    const index = applyPalette(data, colors);
+    for (let i = 0; i < index.length; i++) if (data[i * 4 + 3] < 128) index[i] = clear;
+    gif.writeFrame(index, frame.width, frame.height,
+      { palette: n ? undefined : palette, delay: step, transparent: true, transparentIndex: clear });
+    await new Promise(resolve => setTimeout(resolve));
+  }
+  gif.finish();
+  return new Blob([gif.bytes()], { type: 'image/gif' });
+}
+
+$('download').addEventListener('click', async () => {
+  const button = $('download');
+  if (!isAnimated()) return canvas.toBlob(blob => save(blob, 'png'));
+  button.disabled = true;
+  button.textContent = 'Making GIF…';
+  try {
+    save(await makeGif(current), 'gif');
+  } catch {
+    alert("Couldn't make the GIF. Check your internet connection and try again.");
+  } finally {
+    button.disabled = false;
+    button.textContent = isAnimated() ? 'Download GIF' : 'Download PNG';
+  }
 });
 
 function hsvToCss(h, s, v) {
@@ -191,12 +291,53 @@ function hsvToCss(h, s, v) {
   return `rgb(${[5, 3, 1].map(n => Math.round(f(n) * 255)).join(', ')})`;
 }
 
-function hexToHsv(hex) {
-  const [r, g, b] = [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16) / 255);
+function rgbToHsv(r, g, b) {
+  [r, g, b] = [r / 255, g / 255, b / 255];
   const max = Math.max(r, g, b), d = max - Math.min(r, g, b);
   let h = 0;
   if (d) h = max === r ? (g - b) / d : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
   return [(h * 60 + 360) % 360, max ? d / max : 0, max];
+}
+
+function hexToHsv(hex) {
+  return rgbToHsv(...[1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16)));
+}
+
+async function mainColor(item) {
+  if (item.color) return item.color;
+  const { frames } = await loadMedia(item);
+  const size = 64;
+  const sample = document.createElement('canvas');
+  sample.width = sample.height = size;
+  const g = sample.getContext('2d', { willReadFrequently: true });
+  g.drawImage(frames[0].image, 0, 0, size, size);
+  const data = g.getImageData(0, 0, size, size).data;
+  const bands = new Map(), total = [0, 0, 0];
+  let count = 0, colorful = 0;
+  for (let i = 0; i < data.length; i += 4) {
+    if (data[i + 3] < 128) continue;
+    const rgb = [data[i], data[i + 1], data[i + 2]];
+    rgb.forEach((c, k) => { total[k] += c; });
+    count++;
+    const [h, s, v] = rgbToHsv(...rgb);
+    if (s < 0.25 || v < 0.2) continue;
+    const weight = s * v, band = Math.floor(h / 15) % 24;
+    colorful += weight;
+    const sums = bands.get(band) || [0, 0, 0, 0];
+    sums[0] += weight;
+    rgb.forEach((c, k) => { sums[k + 1] += c * weight; });
+    bands.set(band, sums);
+  }
+  let rgb = total.map(c => c / Math.max(count, 1));
+  if (colorful > 0 && colorful >= 0.01 * count) {
+    const near = band => [-1, 0, 1].map(d => bands.get((band + d + 24) % 24)).filter(Boolean);
+    const weightOf = band => near(band).reduce((sum, b) => sum + b[0], 0);
+    const best = near([...bands.keys()].reduce((a, b) => (weightOf(b) > weightOf(a) ? b : a)));
+    const weight = best.reduce((sum, b) => sum + b[0], 0);
+    rgb = [1, 2, 3].map(k => best.reduce((sum, b) => sum + b[k], 0) / weight);
+  }
+  item.color = `#${rgb.map(c => Math.round(c).toString(16).padStart(2, '0')).join('')}`;
+  return item.color;
 }
 
 function cone([h, s, v]) {
@@ -206,7 +347,7 @@ function cone([h, s, v]) {
 
 const clamp = x => Math.min(1, Math.max(0, x));
 
-function hsvPalette(root, label, onPick) {
+function hsvPalette(root, label, onPick, matchLabel, matchColor) {
   let h = 210, s = 0.7, v = 0.9;
   const square = document.createElement('div');
   square.className = 'sv';
@@ -226,9 +367,17 @@ function hsvPalette(root, label, onPick) {
   hue.setAttribute('aria-label', `${label}: hue`);
   const swatch = document.createElement('span');
   swatch.className = 'swatch';
+  const match = document.createElement('button');
+  match.type = 'button';
+  match.textContent = matchLabel;
+  match.addEventListener('click', async () => {
+    [h, s, v] = hexToHsv(await matchColor());
+    hue.value = h;
+    pick();
+  });
   const row = document.createElement('div');
   row.className = 'hue-row';
-  row.append(hue, swatch);
+  row.append(hue, swatch, match);
   root.append(square, row);
 
   function paint() {
@@ -354,8 +503,9 @@ function setupColumn(key, element, items, noun) {
     column.query = column.search.value.trim().toLowerCase();
     applySearch(column);
   });
+  const other = key === 'icon' ? 'banner' : 'icon';
   column.palette = hsvPalette(element.querySelector('.hsv'), `${key[0].toUpperCase()}${key.slice(1)} color`,
-    hsv => pickColor(column, hsv));
+    hsv => pickColor(column, hsv), `Match ${other}`, () => mainColor(state[other]));
   applySearch(column);
   return column;
 }
@@ -382,7 +532,10 @@ function setupUpload(column, input) {
       first = {
         name: file.name.replace(/\.[^.]+$/, ''),
         image: URL.createObjectURL(file),
-        requirement: `Your own image. Imported ${column.noun} only show up here, not in the game.`,
+        type: file.type,
+        requirement: column.key === 'banner'
+          ? 'Custom banner.'
+          : `Your own image. Imported ${column.noun} only show up here, not in the game.`,
         imported: true,
       };
       column.grid.prepend(pickerButton(column, first));

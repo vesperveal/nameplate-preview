@@ -4,20 +4,20 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>PHIGHTING! Nameplate Previewer</title>
-  <link rel="icon" type="image/png" href="favicon.png?v=14">
+  <link rel="icon" type="image/png" href="favicon.png?v=15">
   <link rel="preload" href="fonts/AlloVariableFriendly.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Montserrat:wght@800;900&display=swap">
-  <link rel="stylesheet" href="style.css?v=14">
-  <script src="data.js?v=14" defer></script>
-  <script src="script.js?v=14" defer></script>
+  <link rel="stylesheet" href="style.css?v=15">
+  <script src="data.js?v=15" defer></script>
+  <script src="script.js?v=15" defer></script>
 </head>
 <body>
 <main>
   <header class="top">
     <h1>PHIGHTING! nameplate previewer</h1>
-    <img src="logo.webp?v=14" alt="" width="405" height="240">
+    <img src="logo.webp?v=15" alt="" width="405" height="240">
   </header>
 
   <div class="stage">
@@ -42,6 +42,15 @@
       <button id="download" type="button">Download PNG</button>
     </aside>
   </div>
+
+  <section class="team" aria-labelledby="team-heading">
+    <div class="team-head">
+      <h2 id="team-heading">Team <span id="team-count" class="count"></span></h2>
+      <button id="add-plate" type="button">Add nameplate</button>
+      <button id="download-team" type="button" hidden>Download team PNG</button>
+    </div>
+    <ol id="plates" class="plates" hidden></ol>
+  </section>
 
   <p class="same-color"><label><input id="same-color" type="checkbox"> Use the same color for icons and banners</label></p>
 

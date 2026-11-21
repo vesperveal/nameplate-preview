@@ -11,14 +11,18 @@ const playerInput = $('player');
 const titleSelect = $('title');
 
 const byName = (list, name) => list.find(x => x.name === name) || list[0];
-const state = {
+const plates = [{
+  name: 'battbites',
   icon: byName(DATA.icons, 'Boombox Mastery Icon I'),
   banner: byName(DATA.banners, 'Crossroads Aromantic Pride'),
   title: byName(DATA.titles, 'Bat vs Rat'),
+  customTitle: '',
   team: 0,
   rank: 0,
   pluses: 25,
-};
+}];
+let active = 0;
+let state = plates[active];
 const hover = {};
 const shown = key => hover[key] || state[key];
 
@@ -31,9 +35,9 @@ const CUSTOM_TITLE = {
 };
 const customInput = $('custom-title');
 
-function titleText() {
-  const { title, team, rank, pluses } = state;
-  if (title.custom) return customInput.value;
+function titleText(plate = state) {
+  const { title, team, rank, pluses } = plate;
+  if (title.custom) return plate.customTitle;
   if (!title.teams) return title.name;
   return `${title.teams[team]} ${RANKS[rank].name}${'+'.repeat(pluses)}`;
 }
@@ -84,7 +88,7 @@ titleSelect.addEventListener('change', () => {
   if (state.title.custom) customInput.focus();
   render();
 });
-customInput.addEventListener('input', render);
+customInput.addEventListener('input', () => { state.customTitle = customInput.value; render(); });
 $('rank').addEventListener('change', event => { state.rank = +event.target.value; render(); });
 $('pluses').addEventListener('input', event => {
   state.pluses = Math.max(0, Math.min(99, Math.floor(+event.target.value) || 0));
@@ -158,8 +162,12 @@ function outlinedText(g, text, x, y, weight, size, maxWidth) {
 
 let current = null;
 
-function draw(g, t, { icon, banner } = current) {
-  g.clearRect(0, 0, canvas.width, canvas.height);
+function draw(g, t, shot = current, plate = state) {
+  g.clearRect(0, 0, g.canvas.width, g.canvas.height);
+  paintPlate(g, t, shot, plate);
+}
+
+function paintPlate(g, t, { icon, banner }, plate) {
   g.fillStyle = '#000';
   g.fillRect(0, 0, SIZE + 2 * BORDER, SIZE + 2 * BORDER);
   g.fillRect(BANNER_X - BORDER, 0, BANNER_W + 2 * BORDER, SIZE + 2 * BORDER);
@@ -173,17 +181,31 @@ function draw(g, t, { icon, banner } = current) {
   g.fillRect(BANNER_X, BORDER, BANNER_W, SIZE);
 
   const textX = BANNER_X + 36;
-  outlinedText(g, playerInput.value.toUpperCase(), textX, BORDER + 82, 900, 60, BANNER_W * 0.6);
-  outlinedText(g, titleText(), textX + 2, BORDER + 124, 800, 32, BANNER_W * 0.6);
+  outlinedText(g, plate.name.toUpperCase(), textX, BORDER + 82, 900, 60, BANNER_W * 0.6);
+  outlinedText(g, titleText(plate), textX + 2, BORDER + 124, 800, 32, BANNER_W * 0.6);
 }
 
 const isAnimated = ({ icon, banner } = current) => icon.duration > 0 || banner.duration > 0;
 const startTime = performance.now();
 let frameRequest = 0;
 
+function paintAll(t) {
+  if (current) draw(ctx, t);
+  drawTeam(t);
+}
+
 function animate(now) {
-  draw(ctx, now - startTime);
+  paintAll(now - startTime);
   frameRequest = requestAnimationFrame(animate);
+}
+
+function restartAnimation() {
+  cancelAnimationFrame(frameRequest);
+  if ((current && isAnimated()) || teamMedia.some(shot => isAnimated(shot))) {
+    frameRequest = requestAnimationFrame(animate);
+  } else {
+    paintAll(0);
+  }
 }
 
 let renderId = 0;
@@ -207,10 +229,9 @@ async function render() {
   if (id !== renderId) return;
 
   current = { icon, banner };
-  cancelAnimationFrame(frameRequest);
   if (!$('download').disabled) $('download').textContent = isAnimated() ? 'Download GIF' : 'Download PNG';
-  if (isAnimated()) frameRequest = requestAnimationFrame(animate);
-  else draw(ctx, 0);
+  restartAnimation();
+  renderTeam();
 }
 
 function showRequirements() {
@@ -228,24 +249,24 @@ function showRequirements() {
   }));
 }
 
-function save(blob, extension) {
+function save(blob, filename) {
   const link = document.createElement('a');
   link.href = URL.createObjectURL(blob);
-  link.download = `nameplate-${playerInput.value || 'player'}.${extension}`;
+  link.download = filename;
   link.click();
   setTimeout(() => URL.revokeObjectURL(link.href), 1000);
 }
 
-async function makeGif(shot) {
+async function makeGif(width, height, mediaList, paint) {
   const { GIFEncoder, quantize, applyPalette } = await import(GIFENC);
-  const animated = [shot.icon, shot.banner].filter(m => m.duration);
+  const animated = mediaList.filter(m => m.duration);
   const duration = Math.min(Math.max(...animated.map(m => m.duration)), 15000);
   const step = Math.max(20, Math.min(...animated.flatMap(m => m.frames.map(frame => frame.delay))));
   const frame = document.createElement('canvas');
-  frame.width = canvas.width;
-  frame.height = canvas.height;
+  frame.width = width;
+  frame.height = height;
   const g = frame.getContext('2d', { willReadFrequently: true });
-  const pixels = t => { draw(g, t, shot); return g.getImageData(0, 0, frame.width, frame.height).data; };
+  const pixels = t => { paint(g, t); return g.getImageData(0, 0, frame.width, frame.height).data; };
   const times = [];
   for (let t = 0; t < duration; t += step) times.push(t);
 
@@ -271,19 +292,170 @@ async function makeGif(shot) {
   return new Blob([gif.bytes()], { type: 'image/gif' });
 }
 
-$('download').addEventListener('click', async () => {
-  const button = $('download');
-  if (!isAnimated()) return canvas.toBlob(blob => save(blob, 'png'));
+async function download(button, filename, width, height, shots, paint, label) {
+  if (!shots.some(shot => isAnimated(shot))) {
+    const still = document.createElement('canvas');
+    still.width = width;
+    still.height = height;
+    paint(still.getContext('2d'), 0);
+    return still.toBlob(blob => save(blob, `${filename}.png`));
+  }
   button.disabled = true;
   button.textContent = 'Making GIF…';
   try {
-    save(await makeGif(current), 'gif');
+    save(await makeGif(width, height, shots.flatMap(shot => [shot.icon, shot.banner]), paint), `${filename}.gif`);
   } catch {
     alert("Couldn't make the GIF. Check your internet connection and try again.");
   } finally {
     button.disabled = false;
-    button.textContent = isAnimated() ? 'Download GIF' : 'Download PNG';
+    button.textContent = label();
   }
+}
+
+$('download').addEventListener('click', () => {
+  const shot = current, plate = state;
+  download($('download'), `nameplate-${plate.name || 'player'}`, canvas.width, canvas.height, [shot],
+    (g, t) => draw(g, t, shot, plate), () => (isAnimated() ? 'Download GIF' : 'Download PNG'));
+});
+
+const ROW_GAP = 16;
+const teamList = $('plates');
+let teamMedia = [];
+let teamId = 0;
+
+function teamLabel() {
+  return teamMedia.some(shot => isAnimated(shot)) ? 'Download team GIF' : 'Download team PNG';
+}
+
+function plateTool(text, label, action, disabled) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.textContent = text;
+  button.setAttribute('aria-label', label);
+  button.dataset.action = action;
+  button.disabled = disabled;
+  return button;
+}
+
+function buildRows() {
+  teamList.replaceChildren(...plates.map((plate, i) => {
+    const row = document.createElement('li');
+    row.className = 'plate-row';
+    const pick = document.createElement('button');
+    pick.type = 'button';
+    pick.className = 'plate-pick';
+    pick.setAttribute('aria-pressed', i === active);
+    pick.setAttribute('aria-label', `Edit nameplate ${i + 1}: ${plate.name}`);
+    const preview = document.createElement('canvas');
+    preview.width = canvas.width;
+    preview.height = canvas.height;
+    pick.append(preview);
+    pick.addEventListener('click', () => setActive(i));
+    const tools = document.createElement('div');
+    tools.className = 'plate-tools';
+    tools.append(
+      plateTool('↑', 'Move up', 'up', i === 0),
+      plateTool('↓', 'Move down', 'down', i === plates.length - 1),
+      plateTool('Remove', `Remove nameplate ${i + 1}`, 'remove', plates.length === 1),
+    );
+    tools.addEventListener('click', event => {
+      const action = event.target.closest('button')?.dataset.action;
+      if (action === 'up') movePlate(i, -1);
+      if (action === 'down') movePlate(i, 1);
+      if (action === 'remove') removePlate(i);
+    });
+    row.append(pick, tools);
+    return row;
+  }));
+}
+
+function drawTeam(t) {
+  teamList.querySelectorAll('canvas').forEach((preview, i) => {
+    if (teamMedia[i]) draw(preview.getContext('2d'), t, teamMedia[i], plates[i]);
+  });
+}
+
+let rebuildPending = false;
+
+async function renderTeam(rebuild = false) {
+  const id = ++teamId;
+  rebuildPending ||= rebuild;
+  const stacked = plates.length > 1;
+  teamList.hidden = !stacked;
+  $('download-team').hidden = !stacked;
+  $('team-count').textContent = stacked ? `${plates.length} nameplates` : '';
+  let loaded;
+  try {
+    loaded = await Promise.all(plates.map(async plate => ({
+      icon: await loadMedia(plate.icon),
+      banner: await loadMedia(plate.banner),
+    })));
+  } catch {
+    return;
+  }
+  if (id !== teamId) return;
+  teamMedia = stacked ? loaded : [];
+  if (rebuildPending || teamList.children.length !== plates.length) buildRows();
+  rebuildPending = false;
+  if (!$('download-team').disabled) $('download-team').textContent = teamLabel();
+  restartAnimation();
+}
+
+function syncControls() {
+  playerInput.value = state.name;
+  titleSelect.value = state.title.custom ? 'custom' : DATA.titles.indexOf(state.title);
+  customInput.value = state.customTitle;
+  $('custom-title-label').hidden = !state.title.custom;
+  $('rank').value = state.rank;
+  $('pluses').value = state.pluses;
+  showPhestival();
+  for (const column of columns) {
+    for (const [item, button] of column.buttons) button.setAttribute('aria-pressed', item === state[column.key]);
+  }
+}
+
+function setActive(index) {
+  active = index;
+  state = plates[active];
+  for (const key in hover) delete hover[key];
+  syncControls();
+  render();
+  renderTeam(true);
+}
+
+function movePlate(i, step) {
+  const j = i + step;
+  [plates[i], plates[j]] = [plates[j], plates[i]];
+  if (active === i) active = j;
+  else if (active === j) active = i;
+  renderTeam(true).then(() => {
+    const button = teamList.children[j]?.querySelector(`[data-action="${step < 0 ? 'up' : 'down'}"]`);
+    (button && !button.disabled ? button : teamList.children[j]?.querySelector('.plate-pick'))?.focus();
+  });
+}
+
+function removePlate(i) {
+  plates.splice(i, 1);
+  setActive(i < active ? active - 1 : Math.min(active, plates.length - 1));
+}
+
+$('add-plate').addEventListener('click', () => {
+  plates.splice(active + 1, 0, { ...state });
+  setActive(active + 1);
+});
+
+$('download-team').addEventListener('click', () => {
+  const shots = teamMedia, stack = [...plates];
+  const rowHeight = canvas.height + ROW_GAP;
+  download($('download-team'), 'team', canvas.width, stack.length * rowHeight - ROW_GAP, shots, (g, t) => {
+    g.clearRect(0, 0, g.canvas.width, g.canvas.height);
+    stack.forEach((plate, i) => {
+      g.save();
+      g.translate(0, i * rowHeight);
+      paintPlate(g, t, shots[i], plate);
+      g.restore();
+    });
+  }, teamLabel);
 });
 
 function hsvToCss(h, s, v) {
@@ -553,7 +725,7 @@ columns = [
 setupUpload(columns[0], $('icon-upload'));
 setupUpload(columns[1], $('banner-upload'));
 
-playerInput.addEventListener('input', render);
+playerInput.addEventListener('input', () => { state.name = playerInput.value; render(); });
 buildTitles();
 showPhestival();
 render();

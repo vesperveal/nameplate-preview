@@ -261,7 +261,7 @@ async function makeGif(width, height, mediaList, paint) {
   const { GIFEncoder, quantize, applyPalette } = await import(GIFENC);
   const animated = mediaList.filter(m => m.duration);
   const duration = Math.min(Math.max(...animated.map(m => m.duration)), 15000);
-  const step = Math.max(20, Math.min(...animated.flatMap(m => m.frames.map(frame => frame.delay))));
+  const step = Math.max(40, Math.min(...animated.flatMap(m => m.frames.map(frame => frame.delay))));
   const frame = document.createElement('canvas');
   frame.width = width;
   frame.height = height;
@@ -280,14 +280,38 @@ async function makeGif(width, height, mediaList, paint) {
   const clear = palette.length - 1;
 
   const gif = GIFEncoder();
-  for (const [n, t] of times.entries()) {
+  let previous = null, pending = null;
+  const flush = () => gif.writeFrame(pending.index, frame.width, frame.height, {
+    palette: pending.first ? palette : undefined,
+    delay: pending.delay,
+    transparent: true,
+    transparentIndex: clear,
+    dispose: 1,
+  });
+  for (const t of times) {
     const data = pixels(t);
     const index = applyPalette(data, colors);
     for (let i = 0; i < index.length; i++) if (data[i * 4 + 3] < 128) index[i] = clear;
-    gif.writeFrame(index, frame.width, frame.height,
-      { palette: n ? undefined : palette, delay: step, transparent: true, transparentIndex: clear });
+    if (!previous) {
+      pending = { index, delay: step, first: true };
+    } else {
+      const changes = index.slice();
+      let changed = false;
+      for (let i = 0; i < changes.length; i++) {
+        if (changes[i] === previous[i]) changes[i] = clear;
+        else changed = true;
+      }
+      if (!changed) {
+        pending.delay += step;
+        continue;
+      }
+      flush();
+      pending = { index: changes, delay: step };
+    }
+    previous = index;
     await new Promise(resolve => setTimeout(resolve));
   }
+  flush();
   gif.finish();
   return new Blob([gif.bytes()], { type: 'image/gif' });
 }
@@ -635,7 +659,6 @@ function applySearch(column) {
     button.hidden = !item.imported && !item.name.toLowerCase().includes(column.query);
     if (!button.hidden) visible++;
   }
-  column.count.textContent = `${visible} of ${column.buttons.size}`;
   column.empty.hidden = visible > 0;
   column.empty.textContent = `No ${column.noun} named "${column.query}". `;
   const clear = document.createElement('button');
@@ -663,7 +686,6 @@ function setupColumn(key, element, items, noun) {
     key, noun, query: '',
     buttons: new Map(),
     grid: element.querySelector('.picker'),
-    count: element.querySelector('.count'),
     search: element.querySelector('.search'),
     points: new Map(items.map(item => [item, cone(hexToHsv(item.color))])),
     empty: document.createElement('p'),
